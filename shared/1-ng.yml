@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nginx1
+  namespace: nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx1
+  namespace: nginx
+  labels:
+    app: nginx1
+    service: nginx1
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+  selector:
+    app: nginx1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx1
+  namespace: nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx1
+      namespace: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx1
+        namespace: nginx
+    spec:
+      containers:
+        - name: nginx1
+          image: aayush808/nginx:v1.0
+          ports:
+            - containerPort: 80
+
