@@ -1,0 +1,112 @@
+pipeline {
+
+    agent any
+
+    environment {
+        AWS_REGION = "ap-south-1"
+        ECR_REPO = "123456789012.dkr.ecr.ap-south-1.amazonaws.com/myapp"
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        NAMESPACE = "production"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh '''
+                    docker build \
+                      -t ${ECR_REPO}:${IMAGE_TAG} .
+                '''
+            }
+        }
+
+        stage('Push Image') {
+            steps {
+                sh '''
+                    aws ecr get-login-password \
+                      --region ${AWS_REGION} |
+                    docker login \
+                      --username AWS \
+                      --password-stdin ${ECR_REPO}
+
+                    docker push ${ECR_REPO}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Deploy Canary') {
+            steps {
+                sh '''
+                    kubectl -n ${NAMESPACE} set image \
+                      deployment/myapp-canary \
+                      myapp=${ECR_REPO}:${IMAGE_TAG}
+
+                    kubectl -n ${NAMESPACE} rollout status \
+                      deployment/myapp-canary \
+                      --timeout=5m
+                '''
+            }
+        }
+
+        stage('Canary 10%') {
+            steps {
+                sh '''
+                    kubectl -n ${NAMESPACE} annotate ingress myapp-canary \
+                      nginx.ingress.kubernetes.io/canary-weight="10" \
+                      --overwrite
+                '''
+            }
+        }
+
+        stage('Approval') {
+            steps {
+                input message: 'Canary looks healthy. Promote to 50%?'
+            }
+        }
+
+        stage('Canary 50%') {
+            steps {
+                sh '''
+                    kubectl -n ${NAMESPACE} annotate ingress myapp-canary \
+                      nginx.ingress.kubernetes.io/canary-weight="50" \
+                      --overwrite
+                '''
+            }
+        }
+
+        stage('Final Approval') {
+            steps {
+                input message: 'Promote Canary to 100%?'
+            }
+        }
+
+        stage('Promote') {
+            steps {
+                sh '''
+                    kubectl -n ${NAMESPACE} set image \
+                      deployment/myapp-stable \
+                      myapp=${ECR_REPO}:${IMAGE_TAG}
+
+                    kubectl -n ${NAMESPACE} rollout status \
+                      deployment/myapp-stable \
+                      --timeout=5m
+                '''
+            }
+        }
+
+        stage('Remove Canary') {
+            steps {
+                sh '''
+                    kubectl -n ${NAMESPACE} scale \
+                      deployment/myapp-canary --replicas=0
+                '''
+            }
+        }
+    }
+}
